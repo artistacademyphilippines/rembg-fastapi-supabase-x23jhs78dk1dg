@@ -52,6 +52,7 @@ async def get_user_credits(user_email: str) -> int:
                 "apikey": SUPABASE_SERVICE_KEY,
                 "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
                 "Accept": "application/json",
+                "Accept-Profile": "wondr_users",
             },
         )
     
@@ -89,6 +90,8 @@ async def deduct_credit(user_email: str) -> int:
                 "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
                 "Content-Type": "application/json",
                 "Prefer": "return=representation",
+                "Accept-Profile": "wondr_users",
+                "Content-Profile": "wondr_users",
             },
             json={"rembg_credits": new_credits}
         )
@@ -116,6 +119,8 @@ async def refund_credit(user_email: str):
                     "apikey": SUPABASE_SERVICE_KEY,
                     "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
                     "Content-Type": "application/json",
+                    "Accept-Profile": "wondr_users",
+                    "Content-Profile": "wondr_users",
                 },
                 json={"rembg_credits": current_credits + 1}
             )
