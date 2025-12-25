@@ -30,8 +30,7 @@ class RequestData(BaseModel):
     data_sent: str
 
 # ---------------- HELPERS ----------------
-async def get_user_id_from_token(token: str) -> str:
-    """Validate token with Supabase Auth"""
+async def get_user_email_from_token(token: str) -> str:
     async with httpx.AsyncClient() as client:
         res = await client.get(
             f"{SUPABASE_URL}/auth/v1/user",
@@ -44,13 +43,14 @@ async def get_user_id_from_token(token: str) -> str:
     if res.status_code != 200:
         raise HTTPException(status_code=401, detail="Invalid session token")
 
-    return res.json()["id"]
+    return res.json()["email"]
 
-async def has_credits(user_id: str) -> bool:
+
+async def has_credits(email: str) -> bool:
     async with httpx.AsyncClient() as client:
         res = await client.get(
             f"{SUPABASE_URL}/rest/v1/wondr_users"
-            f"?select=rembg_credits&id=eq.{user_id}",
+            f"?select=rembg_credits&email=eq.{email}",
             headers={
                 "apikey": SUPABASE_SERVICE_KEY,
                 "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
@@ -58,6 +58,7 @@ async def has_credits(user_id: str) -> bool:
         )
 
     if res.status_code != 200:
+        print("Supabase error:", res.text)
         raise HTTPException(status_code=500, detail="Failed to fetch credits")
 
     data = res.json()
@@ -74,13 +75,14 @@ async def remove_background(
 
     token = authorization.replace("Bearer ", "")
 
-    # ✅ THIS IS THE FIX
-    user_id = await get_user_id_from_token(token)
+    # ✅ AUTH VALIDATION (Supabase does it)
+    email = await get_user_email_from_token(token)
 
-    if not await has_credits(user_id):
+    # ✅ CREDIT CHECK
+    if not await has_credits(email):
         raise HTTPException(status_code=403, detail="No rembg credits")
 
-    # ---- REMOVE BG ----
+    # ✅ REMOVE BACKGROUND
     img_bytes = base64.b64decode(request_data.data_sent.split(",")[1])
     output = remove(img_bytes, post_process_mask=True)
 
