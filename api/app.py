@@ -64,25 +64,25 @@ async def remove_background(
 
     token = authorization.split(" ")[1]
 
-    # 🔥 THIS WAS THE BUG
-    try:
-    payload = jwt.decode(
-        token,
-        SUPABASE_JWT_SECRET,
-        algorithms=["HS256"],
-        options={
-            "verify_aud": False,
-            "verify_iss": False,
-        },
-    )
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError as e:
-        print("JWT DECODE ERROR:", e)
-        raise HTTPException(status_code=401, detail="Invalid token")
+        # 🔥 THIS WAS THE BUG
+        try:
+        payload = jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            options={
+                "verify_aud": False,
+                "verify_iss": False,
+            },
+        )
+        user_id = payload.get("sub")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token expired")
+        except jwt.InvalidTokenError as e:
+            print("JWT DECODE ERROR:", e)
+            raise HTTPException(status_code=401, detail="Invalid token")
 
 
     # Remove background
@@ -95,4 +95,5 @@ async def remove_background(
     return {
         "data_received": f"data:image/png;base64,{new_base64}"
     }
+
 
