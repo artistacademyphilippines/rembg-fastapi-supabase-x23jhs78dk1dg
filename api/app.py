@@ -2,99 +2,93 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from rembg import remove
-import base64
 from io import BytesIO
+import base64
+import asyncpg
+import jwt
 import os
-import logging
-import jwt  # PyJWT library for JWT decoding
 
-# -----------------------
+# --------------------
 # CONFIG
-# -----------------------
-SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET")
+# --------------------
+SUPABASE_JWT_SECRET = os.environ["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kc2ticXBnaGxwdHNrZ2xzZWtwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzgwNjg5MzQsImV4cCI6MjA1MzY0NDkzNH0.73MEv89D96Uzm0Ft65lRPhY0gQghia8jvVdwK1G5UkU"]
+DATABASE_URL = os.environ["https://mdskbqpghlptskglsekp.supabase.co"]
 
-# Frontend origins allowed to call this API
-origins = [
-    "http://127.0.0.1:5503",  # local dev
-    "http://localhost:5503",
-    "https://artistaacademy.github.io"  # production frontend
-]
-
-# -----------------------
-# FASTAPI SETUP
-# -----------------------
+# --------------------
+# APP
+# --------------------
 app = FastAPI()
-logging.basicConfig(level=logging.INFO)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=[
+        "http://127.0.0.1:5503",
+        "http://localhost:5503",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# -----------------------
-# REQUEST MODEL
-# -----------------------
+# --------------------
+# MODEL
+# --------------------
 class RequestData(BaseModel):
-    data_sent: str  # base64 image string
+    data_sent: str
 
-# -----------------------
-# HELPER FUNCTION TO VERIFY JWT
-# -----------------------
-def verify_supabase_jwt(token: str):
+# --------------------
+# HELPERS
+# --------------------
+def get_user_id(token: str) -> str:
     try:
         payload = jwt.decode(
             token,
             SUPABASE_JWT_SECRET,
             algorithms=["HS256"],
-            options={"verify_aud": False}  # optional, depending on your Supabase config
+            options={"verify_aud": False},
         )
-        user_id = payload.get("sub")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token: missing user id")
-        return user_id
-    except Exception as e:
-        logging.error(f"JWT verification failed: {e}")
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        return payload["sub"]
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
-# -----------------------
+# --------------------
 # ROUTE
-# -----------------------
+# --------------------
 @app.post("/")
 async def remove_background(
-    request_data: RequestData,
+    request: RequestData,
     authorization: str = Header(...)
 ):
-    # Expect header: Authorization: Bearer <JWT>
     if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing Bearer token")
-    
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
     token = authorization.split(" ")[1]
-    
-    # Verify JWT
-    user_id = verify_supabase_jwt(token)
-    logging.info(f"Processing request for user_id: {user_id}")
+    user_id = get_user_id(token)
 
-    try:
-        # Decode base64 image
-        if "," in request_data.data_sent:
-            img_data = base64.b64decode(request_data.data_sent.split(",")[1])
-        else:
-            img_data = base64.b64decode(request_data.data_sent)
+    # ---- CHECK CREDITS ----
+    conn = await asyncpg.connect(DATABASE_URL)
 
-        # Remove background
-        removed_background = remove(img_data, post_process_mask=True)
+    credits = await conn.fetchval(
+        """
+        SELECT rembg_credits
+        FROM wondr_users.wondr_users
+        WHERE user_id = $1
+        """,
+        user_id,
+    )
 
-        # Convert to base64 for frontend
-        bio = BytesIO(removed_background)
-        bio.seek(0)
-        new_base64 = base64.b64encode(bio.getvalue()).decode("utf-8")
-        result_data = f"data:image/png;base64,{new_base64}"
+    await conn.close()
 
-        return {"data_received": result_data}
+    if credits is None or credits <= 0:
+        raise HTTPException(status_code=403, detail="No credits left")
 
-    except Exception as e:
-        logging.error(f"Failed to process image: {e}")
-        raise HTTPException(status_code=500, detail="Failed to remove background")
+    # ---- REMOVE BACKGROUND ----
+    img_bytes = base64.b64decode(request.data_sent.split(",")[1])
+    output = remove(img_bytes, post_process_mask=True)
+
+    buffer = BytesIO(output)
+    encoded = base64.b64encode(buffer.getvalue()).decode()
+
+    return {
+        "data_received": f"data:image/png;base64,{encoded}"
+    }
