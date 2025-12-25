@@ -11,7 +11,7 @@ import jwt  # PyJWT
 # -------------------
 # Environment variables (set these in your App Platform)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")  # or anon key if read-only
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")  # or anon key if read-only
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
 
 if not all([SUPABASE_URL, SUPABASE_KEY, SUPABASE_JWT_SECRET]):
@@ -79,3 +79,4 @@ async def remove_background(request_data: RequestData, authorization: str = Head
     data_received = f"data:image/png;base64,{new_base64}"
 
     return {"data_received": data_received}
+
