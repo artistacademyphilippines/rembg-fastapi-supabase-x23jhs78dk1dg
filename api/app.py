@@ -12,9 +12,9 @@ from rembg import remove
 # -------------------------------
 # CONFIG
 # -------------------------------
-SUPABASE_URL = os.environ.get("https://mdskbqpghlptskglsekp.supabase.co")  # e.g. https://xyz.supabase.co
-SUPABASE_JWT_SECRET = os.environ.get("e787631d-e2b0-4529-a6c1-0b257889213d")  # HS256 JWT signing key
-SUPABASE_SERVICE_KEY = os.environ.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kc2ticXBnaGxwdHNrZ2xzZWtwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzgwNjg5MzQsImV4cCI6MjA1MzY0NDkzNH0.73MEv89D96Uzm0Ft65lRPhY0gQghia8jvVdwK1G5UkU")  # for server-side access
+SUPABASE_URL = os.environ.get("SUPABASE_URL")  # e.g. https://xyz.supabase.co
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET")  # HS256 JWT signing key
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")  # for server-side access
 
 if not SUPABASE_URL or not SUPABASE_JWT_SECRET or not SUPABASE_SERVICE_KEY:
     raise RuntimeError("Missing SUPABASE environment variables")
@@ -106,4 +106,5 @@ async def remove_background(
     data_received = f"data:image/png;base64,{new_base64}"
 
     return {"data_received": data_received}
+
 
