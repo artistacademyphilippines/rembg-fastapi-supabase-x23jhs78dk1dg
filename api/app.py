@@ -1,94 +1,108 @@
-from fastapi import FastAPI, Header, HTTPException
+import os
+import base64
+from io import BytesIO
+
+import jwt
+import httpx
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from rembg import remove
-from io import BytesIO
-import base64
-import asyncpg
-import jwt
-import os
 
-# --------------------
+# -------------------------------
 # CONFIG
-# --------------------
-SUPABASE_JWT_SECRET = os.environ["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1kc2ticXBnaGxwdHNrZ2xzZWtwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzgwNjg5MzQsImV4cCI6MjA1MzY0NDkzNH0.73MEv89D96Uzm0Ft65lRPhY0gQghia8jvVdwK1G5UkU"]
-DATABASE_URL = os.environ["https://mdskbqpghlptskglsekp.supabase.co"]
+# -------------------------------
+SUPABASE_URL = os.environ.get("SUPABASE_URL")  # e.g. https://xyz.supabase.co
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET")  # HS256 JWT signing key
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")  # for server-side access
 
-# --------------------
-# APP
-# --------------------
+if not SUPABASE_URL or not SUPABASE_JWT_SECRET or not SUPABASE_SERVICE_KEY:
+    raise RuntimeError("Missing SUPABASE environment variables")
+
+# -------------------------------
+# FASTAPI INIT
+# -------------------------------
 app = FastAPI()
-
+origins = ["http://127.0.0.1:5503"]  # Add your frontend origin(s)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5503",
-        "http://localhost:5503",
-    ],
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
-# --------------------
-# MODEL
-# --------------------
+# -------------------------------
+# REQUEST MODEL
+# -------------------------------
 class RequestData(BaseModel):
-    data_sent: str
+    data_sent: str  # base64 image string
 
-# --------------------
+# -------------------------------
 # HELPERS
-# --------------------
-def get_user_id(token: str) -> str:
+# -------------------------------
+def get_user_id_from_token(token: str) -> str:
     try:
         payload = jwt.decode(
             token,
             SUPABASE_JWT_SECRET,
             algorithms=["HS256"],
-            options={"verify_aud": False},
+            audience="authenticated",
         )
         return payload["sub"]
-    except Exception:
+    except Exception as e:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-# --------------------
-# ROUTE
-# --------------------
+async def has_credits(user_id: str) -> bool:
+    """Return True if user has rembg_credits > 0"""
+    url = f"{SUPABASE_URL}/rest/v1/wondr_users?id=eq.{user_id}"
+    headers = {
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Accept": "application/json",
+    }
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=500, detail="Supabase request failed")
+        data = resp.json()
+        if not data or data[0].get("rembg_credits", 0) <= 0:
+            return False
+        return True
+
+# -------------------------------
+# ENDPOINT
+# -------------------------------
 @app.post("/")
 async def remove_background(
-    request: RequestData,
+    request_data: RequestData,
     authorization: str = Header(...)
 ):
+    # 1. Extract Bearer token
     if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = authorization.split(" ")[1]
-    user_id = get_user_id(token)
 
-    # ---- CHECK CREDITS ----
-    conn = await asyncpg.connect(DATABASE_URL)
+    # 2. Verify JWT
+    user_id = get_user_id_from_token(token)
 
-    credits = await conn.fetchval(
-        """
-        SELECT rembg_credits
-        FROM wondr_users.wondr_users
-        WHERE user_id = $1
-        """,
-        user_id,
-    )
+    # 3. Check rembg_credits
+    if not await has_credits(user_id):
+        raise HTTPException(status_code=403, detail="Insufficient credits")
 
-    await conn.close()
+    # 4. Decode base64 image
+    try:
+        img_data = base64.b64decode(request_data.data_sent.split(",")[1])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid base64 image")
 
-    if credits is None or credits <= 0:
-        raise HTTPException(status_code=403, detail="No credits left")
+    # 5. Remove background
+    removed_background = remove(img_data, post_process_mask=True)
 
-    # ---- REMOVE BACKGROUND ----
-    img_bytes = base64.b64decode(request.data_sent.split(",")[1])
-    output = remove(img_bytes, post_process_mask=True)
+    # 6. Convert to base64
+    new_data = BytesIO(removed_background)
+    new_data.seek(0)
+    new_base64 = base64.b64encode(new_data.getvalue()).decode("utf-8")
+    data_received = f"data:image/png;base64,{new_base64}"
 
-    buffer = BytesIO(output)
-    encoded = base64.b64encode(buffer.getvalue()).decode()
-
-    return {
-        "data_received": f"data:image/png;base64,{encoded}"
-    }
+    return {"data_received": data_received}
