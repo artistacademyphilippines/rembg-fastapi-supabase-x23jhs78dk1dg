@@ -40,11 +40,14 @@ class RequestData(BaseModel):
     data_sent: str
 
 # -------------------
-async def get_user_credits(user_id: str) -> int:
-    """Get user's current rembg_credits by user ID"""
+async def get_user_credits(user_email: str) -> int:
+    """Get user's current rembg_credits by email"""
+    from urllib.parse import quote
+    safe_email = quote(user_email)
+    
     async with httpx.AsyncClient() as client:
         res = await client.get(
-            f"{SUPABASE_URL}/rest/v1/wondr_users?select=rembg_credits&id=eq.{user_id}",
+            f"{SUPABASE_URL}/rest/v1/wondr_users?select=rembg_credits&email=eq.{safe_email}",
             headers={
                 "apikey": SUPABASE_SERVICE_KEY,
                 "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
@@ -60,14 +63,14 @@ async def get_user_credits(user_id: str) -> int:
     
     data = res.json()
     if not data:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="User not found in wondr_users table")
     
     return data[0]["rembg_credits"]
 
-async def deduct_credit(user_id: str) -> int:
+async def deduct_credit(user_email: str) -> int:
     """Deduct 1 credit from user and return new balance"""
     # Get current credits first
-    current_credits = await get_user_credits(user_id)
+    current_credits = await get_user_credits(user_email)
     
     if current_credits <= 0:
         raise HTTPException(status_code=403, detail="Insufficient rembg credits")
@@ -75,9 +78,12 @@ async def deduct_credit(user_id: str) -> int:
     # Deduct 1 credit
     new_credits = current_credits - 1
     
+    from urllib.parse import quote
+    safe_email = quote(user_email)
+    
     async with httpx.AsyncClient() as client:
         res = await client.patch(
-            f"{SUPABASE_URL}/rest/v1/wondr_users?id=eq.{user_id}",
+            f"{SUPABASE_URL}/rest/v1/wondr_users?email=eq.{safe_email}",
             headers={
                 "apikey": SUPABASE_SERVICE_KEY,
                 "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
@@ -95,13 +101,17 @@ async def deduct_credit(user_id: str) -> int:
     
     return new_credits
 
-async def refund_credit(user_id: str):
+async def refund_credit(user_email: str):
     """Refund 1 credit to user"""
     try:
-        current_credits = await get_user_credits(user_id)
+        current_credits = await get_user_credits(user_email)
+        
+        from urllib.parse import quote
+        safe_email = quote(user_email)
+        
         async with httpx.AsyncClient() as client:
             await client.patch(
-                f"{SUPABASE_URL}/rest/v1/wondr_users?id=eq.{user_id}",
+                f"{SUPABASE_URL}/rest/v1/wondr_users?email=eq.{safe_email}",
                 headers={
                     "apikey": SUPABASE_SERVICE_KEY,
                     "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
@@ -109,7 +119,7 @@ async def refund_credit(user_id: str):
                 },
                 json={"rembg_credits": current_credits + 1}
             )
-        print(f"Credit refunded to user {user_id}")
+        print(f"Credit refunded to user {user_email}")
     except Exception as e:
         print(f"Failed to refund credit: {e}")
 
@@ -163,7 +173,7 @@ async def remove_background(request_data: RequestData, authorization: str = Head
     
     # Check and deduct credits
     try:
-        remaining_credits = await deduct_credit(user_id)
+        remaining_credits = await deduct_credit(user_email)
         print(f"Credits deducted. Remaining: {remaining_credits}")
     except HTTPException:
         raise
@@ -179,7 +189,7 @@ async def remove_background(request_data: RequestData, authorization: str = Head
             img_data = base64.b64decode(request_data.data_sent)
     except Exception as e:
         print(f"Failed to decode image: {e}")
-        await refund_credit(user_id)
+        await refund_credit(user_email)
         raise HTTPException(status_code=400, detail="Invalid image data")
     
     # Remove background
@@ -196,5 +206,5 @@ async def remove_background(request_data: RequestData, authorization: str = Head
         }
     except Exception as e:
         print(f"Failed to remove background: {e}")
-        await refund_credit(user_id)
+        await refund_credit(user_email)
         raise HTTPException(status_code=500, detail="Failed to process image")
