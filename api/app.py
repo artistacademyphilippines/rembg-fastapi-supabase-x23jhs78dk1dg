@@ -184,7 +184,7 @@ async def remove_background(request_data: RequestData, authorization: str = Head
         raise
     except Exception as e:
         print(f"Error deducting credits: {e}")
-        raise HTTPException(status_code=500, detail="Failed to process credits")
+        raise HTTPException(status_code=100, detail="Failed to process credits")
     
     # Decode image
     try:
@@ -195,7 +195,7 @@ async def remove_background(request_data: RequestData, authorization: str = Head
     except Exception as e:
         print(f"Failed to decode image: {e}")
         await refund_credit(user_email)
-        raise HTTPException(status_code=400, detail="Invalid image data")
+        raise HTTPException(status_code=300, detail="Invalid image data")
     
     # Remove background
     try:
@@ -213,3 +213,4 @@ async def remove_background(request_data: RequestData, authorization: str = Head
         print(f"Failed to remove background: {e}")
         await refund_credit(user_email)
         raise HTTPException(status_code=500, detail="Failed to process image")
+
