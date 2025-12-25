@@ -24,7 +24,7 @@ app = FastAPI()
 origins = [
     "http://127.0.0.1:5503",
     "http://localhost:5503",
-    # Add your production frontend URL here
+    "*"  # Allow all origins for testing, restrict in production
 ]
 
 app.add_middleware(
@@ -66,16 +66,16 @@ async def get_user_credits(user_id: str) -> int:
 
 async def deduct_credit(user_id: str) -> int:
     """Deduct 1 credit from user and return new balance"""
+    # Get current credits first
+    current_credits = await get_user_credits(user_id)
+    
+    if current_credits <= 0:
+        raise HTTPException(status_code=403, detail="Insufficient rembg credits")
+    
+    # Deduct 1 credit
+    new_credits = current_credits - 1
+    
     async with httpx.AsyncClient() as client:
-        # Get current credits first
-        current_credits = await get_user_credits(user_id)
-        
-        if current_credits <= 0:
-            raise HTTPException(status_code=403, detail="Insufficient rembg credits")
-        
-        # Deduct 1 credit
-        new_credits = current_credits - 1
-        
         res = await client.patch(
             f"{SUPABASE_URL}/rest/v1/wondr_users?id=eq.{user_id}",
             headers={
@@ -95,6 +95,24 @@ async def deduct_credit(user_id: str) -> int:
     
     return new_credits
 
+async def refund_credit(user_id: str):
+    """Refund 1 credit to user"""
+    try:
+        current_credits = await get_user_credits(user_id)
+        async with httpx.AsyncClient() as client:
+            await client.patch(
+                f"{SUPABASE_URL}/rest/v1/wondr_users?id=eq.{user_id}",
+                headers={
+                    "apikey": SUPABASE_SERVICE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={"rembg_credits": current_credits + 1}
+            )
+        print(f"Credit refunded to user {user_id}")
+    except Exception as e:
+        print(f"Failed to refund credit: {e}")
+
 # -------------------
 @app.get("/")
 async def root():
@@ -103,32 +121,45 @@ async def root():
 @app.post("/")
 async def remove_background(request_data: RequestData, authorization: str = Header(None)):
     # Validate authorization header
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    print("=== DEBUG: Authorization Header ===")
+    print(f"Authorization header present: {authorization is not None}")
+    
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    
+    if not authorization.startswith("Bearer "):
+        print(f"Authorization format: {authorization[:20]}...")
+        raise HTTPException(status_code=401, detail="Authorization must be 'Bearer <token>'")
     
     token = authorization.split(" ")[1]
+    print(f"Token (first 50 chars): {token[:50]}...")
     
     # Decode JWT token to get user info
     try:
+        print("Attempting to decode token...")
         payload = jwt.decode(
             token, 
             SUPABASE_JWT_SECRET, 
             algorithms=["HS256"],
-            audience="authenticated"
+            options={"verify_aud": False}
         )
-        user_id = payload.get("sub")  # User ID is in 'sub' claim
+        print(f"Token payload: {payload}")
+        
+        user_id = payload.get("sub")
         user_email = payload.get("email")
         
         if not user_id:
-            raise HTTPException(status_code=401, detail="Token missing user ID")
+            raise HTTPException(status_code=401, detail="Token missing user ID (sub claim)")
         
-        print(f"Authenticated user: {user_email} (ID: {user_id})")
+        print(f"✓ Authenticated user: {user_email} (ID: {user_id})")
         
     except jwt.ExpiredSignatureError:
+        print("Token expired")
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError as e:
         print(f"JWT decode error: {e}")
-        raise HTTPException(status_code=401, detail="Invalid token")
+        print(f"JWT Secret (first 10 chars): {SUPABASE_JWT_SECRET[:10]}...")
+        raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
     
     # Check and deduct credits
     try:
@@ -148,20 +179,7 @@ async def remove_background(request_data: RequestData, authorization: str = Head
             img_data = base64.b64decode(request_data.data_sent)
     except Exception as e:
         print(f"Failed to decode image: {e}")
-        # Refund credit on error
-        try:
-            current = await get_user_credits(user_id)
-            await httpx.AsyncClient().patch(
-                f"{SUPABASE_URL}/rest/v1/wondr_users?id=eq.{user_id}",
-                headers={
-                    "apikey": SUPABASE_SERVICE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={"rembg_credits": current + 1}
-            )
-        except:
-            pass
+        await refund_credit(user_id)
         raise HTTPException(status_code=400, detail="Invalid image data")
     
     # Remove background
@@ -178,18 +196,5 @@ async def remove_background(request_data: RequestData, authorization: str = Head
         }
     except Exception as e:
         print(f"Failed to remove background: {e}")
-        # Refund credit on error
-        try:
-            current = await get_user_credits(user_id)
-            await httpx.AsyncClient().patch(
-                f"{SUPABASE_URL}/rest/v1/wondr_users?id=eq.{user_id}",
-                headers={
-                    "apikey": SUPABASE_SERVICE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={"rembg_credits": current + 1}
-            )
-        except:
-            pass
+        await refund_credit(user_id)
         raise HTTPException(status_code=500, detail="Failed to process image")
